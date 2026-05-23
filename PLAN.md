@@ -123,13 +123,12 @@ AiOSComms relates to the existing components as follows:
   AiOSComms exposes the interface AiOSOrg needs; see *Data Model & Consumer
   Interface*.
 
-AiOSComms implements the parent's **F-EMAIL** feature for the email side and
-introduces messaging/chat, which the parent FEATURES.md does not yet cover.
-Whether messaging earns its own parent feature code (a proposed **F-COMMS** or
-an expansion of F-EMAIL into "managed communication") is an open question for
-the parent project (see *Open Questions*). It is an enforcement point for
-**F-PROMPT-SAFETY**, a consumer of **F-VAULT** and **F-SYNC**, a contributor to
-**F-AUDIT**, and renders on **F-CANVAS**.
+AiOSComms implements the parent's **F-COMMS** feature — *managed communication*
+across both email and messaging/chat. (F-COMMS was minted in the parent
+`FEATURES.md` on 2026-05-23, **replacing** the narrower F-EMAIL, which it
+subsumes.) It is an enforcement point for **F-PROMPT-SAFETY**, a consumer of
+**F-VAULT** and **F-SYNC**, a contributor to **F-AUDIT**, and renders on
+**F-CANVAS**.
 
 ## Architecture
 
@@ -191,9 +190,12 @@ consumer interface the agent and AiOSOrg use.
   Handling*.
 - **Encrypted store** — messages, contacts, attachments, and per-account sync
   cursors, AEAD-encrypted at rest, synced as ciphertext by AiOSFSS.
-- **Consumer interface** — a Unix-socket JSON-RPC control plane plus an event
-  stream — the same shape as AiOSFSS and AiOSVault — through which the agent and
-  AiOSOrg read, subscribe, send, mark/flag, and extract actionable items.
+- **Consumer interface** — one uniform API the agent and AiOSOrg consume *across
+  a boundary, never linked into the core*: a Unix-socket JSON-RPC control plane +
+  event stream (the AiOSFSS/AiOSVault shape), surfaced to the agent as **MCP
+  tooling** and consumed by AiOSOrg through the *same* API (the agent typically
+  mediates AiOSComms↔AiOSOrg). Read, subscribe, send, mark/flag, extract
+  actionable items.
 - **Frontends** — the **canvas widget** is the product form (the unified
   inbox/pane on AiOSCanvas); a **development UI** lets AiOSComms be dogfooded
   before the canvas widget exists; the **headless** frontend serves tests, the
@@ -215,17 +217,22 @@ threat model calls out malicious file/parser payloads as a distinct surface
   memory-safe Rust behind the untrusted-content boundary. This also lets the
   store and crypto reuse the house dependency set (`rusqlite`, the RustCrypto
   stack via the same choices AiOSVault made).
-- **Connectors may pragmatically wrap mature non-Rust clients** where the only
-  sound implementation lives elsewhere — for example, Telegram's `tdlib` is a
-  C++ library, and the most battle-tested Matrix/Signal tooling is Go. Where a
-  connector must call out, it does so across a process boundary (a
-  child process speaking a typed protocol), never by linking untrusted C into
-  the privileged core, so the memory-safety boundary holds. This is a
-  per-connector Phase-0/per-phase decision, recorded as each connector is built.
-- **The consumer/agent-facing client is Python**, like AiOSVault's
-  `python/aiosvault` client and AiOSFSS's client — the agent runtime and
-  AiOSOrg are Python, and a thin Python client over the control socket is the
-  natural seam.
+- **Every connector runs behind a process boundary, regardless of language**
+  (decided 2026-05-23, per Jason — *one of, if not the, largest security risks in
+  AiOS*). A connector — whether a pure-Rust crate or a wrapper around a mature
+  non-Rust client (Telegram's `tdlib` is C++; the best Matrix/Signal tooling is
+  Go) — is **never linked directly into the core.** Each is a separate unit (a
+  child process speaking a typed protocol) that talks to the core over **one
+  uniform connector API**, so the most hostile, attacker-controlled code in the
+  system can never share the core's address space. *Which* non-Rust client a
+  connector wraps is a per-connector Phase-0/per-phase detail; the boundary itself
+  is not optional.
+- **The consumer/agent-facing client is a wrapper over the API — Rust or Python,
+  never a direct link** (decided 2026-05-23, per Jason). A thin Python client over
+  the control socket, like AiOSVault's `python/aiosvault`, is the natural seam for
+  the Python agent runtime and AiOSOrg; it is surfaced to the agent as **MCP
+  tooling**, and AiOSOrg uses the same API. The same boundary discipline as the
+  provider connectors applies here — consumers talk *to* the core, never *into* it.
 
 This is a *proposed* stack to confirm in Phase 0, not an inherited decision.
 The alternative — a Python-first core, leaning on Python's very rich email/chat
@@ -365,8 +372,11 @@ forcing the raw untrusted bytes into its context — central to the safety model
 
 Exposed over a Unix-socket JSON-RPC control plane plus an event stream — the
 same shape as AiOSFSS and AiOSVault, with a `Caller {kind, name}` identity on
-every request. The interface is **versioned from day one** because AiOSOrg is a
-separate repo on its own timeline; breaking it breaks AiOSOrg.
+every request. **The agent consumes this as MCP tooling and AiOSOrg consumes the
+*same* API** (decided 2026-05-23, per Jason); both reach it as a wrapper *across
+the boundary* — never by linking into the core — and the agent typically mediates
+AiOSComms↔AiOSOrg. The interface is **versioned from day one** because AiOSOrg is
+a separate repo on its own timeline; breaking it breaks AiOSOrg.
 
 Capability groups:
 
@@ -490,7 +500,7 @@ The product form is a single AiOSCanvas widget. The UX thesis is *one pane*:
 - **A unified timeline / inbox** across all connected accounts and providers —
   one chronological, threaded, searchable view, not a per-account silo. The user
   sees "their communication," and the agent's triage (what's handled, what needs
-  attention) is the organizing layer, consistent with the parent F-EMAIL "digest
+  attention) is the organizing layer, consistent with the parent F-COMMS "digest
   of what the agent handled" framing.
 - **Thread/conversation view** that renders email and chat with the same mental
   model — a thread is a thread. Provider-specific affordances (a Telegram
@@ -514,7 +524,7 @@ The AiOS agent runtime (Python, parent repo) is AiOSComms's primary operator,
 through the consumer interface and under the safety model:
 
 - **Triage** — the agent reads *safe summaries* (never raw bodies) to categorize,
-  prioritize, and surface what needs attention; this is the F-EMAIL "agent reads
+  prioritize, and surface what needs attention; this is the F-COMMS "agent reads
   and triages" capability.
 - **Draft & send** — the agent drafts replies; sending is gated by
   F-AGENT-POLICY (confidence threshold, confirmation on irreversible/cross-domain
@@ -577,22 +587,36 @@ through the consumer interface and under the safety model:
 - **Multi-user-ready** from day one; AiOS is single-user through M2.
 - **Local-first, encrypted-everything**; cross-device sync via AiOSFSS.
 
-### Component-specific — to confirm in Phase 0
+### Component-specific
 
-- **Stack: Rust headless core + Python consumer client** (proposed above), with
-  per-connector decisions on wrapping non-Rust provider clients across a process
-  boundary. *Confirm in Phase 0.*
-- **Integration order: email (Gmail + IMAP/SMTP) → Telegram → breadth**, per the
-  matrix. *Confirm in Phase 0.*
-- **Crate layout** — a Cargo workspace (`aioscomms-core` library + `aioscomms`
-  binary/daemon, plus a `python/` client) is recommended, mirroring
-  AiOSVault/AiOSTerminal so the security-critical core is independently
-  auditable. *Confirm in Phase 0.*
-- **Store** — SQLite via `rusqlite` (bundled), encrypted payloads, matching the
-  house pattern. *Confirm in Phase 0.*
-- **Consumer-interface transport** — Unix-socket JSON-RPC + event stream
-  (house pattern). The *schema* and its versioning policy are designed in Phase 0
-  because AiOSOrg depends on stability.
+- **Stack: Rust headless core. ✅ Confirmed (2026-05-23, Jason).** The
+  security-critical core is Rust; everything else talks *to* it over a uniform API.
+- **Everything is behind a boundary — providers AND consumers — never linked
+  directly into the core. ✅ Confirmed (2026-05-23, Jason); called out as one of
+  the largest security risks in AiOS.** Provider connectors (Rust *or* Python
+  wrappers) and the agent/AiOSOrg client all communicate with the core over the
+  same API across a process boundary. Nothing untrusted shares the core's address
+  space.
+- **Agent/AiOSOrg interface = MCP tooling over the same API. ✅ Confirmed
+  (2026-05-23, Jason).** The agent consumes the core as MCP tooling; AiOSOrg uses
+  the same API; the agent typically mediates between the two. (Same decision as
+  AiOSCalendar — a cross-cutting AiOS pattern.)
+- **At-rest encryption: reuse AiOSVault's envelope. ✅ Confirmed (2026-05-23,
+  Jason).** The message store uses the Vault-style envelope (per-object keys under
+  a wrapping key); depend on / extract a shared AiOS crypto crate rather than
+  duplicate it — coordinate with AiOSVault.
+- **Integration order: email (Gmail + IMAP/SMTP) → Telegram (first chat) →
+  breadth; SMS deferred to later in the roadmap. ✅ Confirmed (2026-05-23,
+  Jason).** SMS waits on the planned mobile companion app (desktop-first), not an
+  interim gateway number.
+- **Crate layout** *(Phase 0)* — a Cargo workspace (`aioscomms-core` library +
+  `aioscomms` binary/daemon, plus a `python/` client), mirroring
+  AiOSVault/AiOSTerminal so the security-critical core is independently auditable.
+- **Store** *(Phase 0)* — SQLite via `rusqlite` (bundled), encrypted payloads,
+  matching the house pattern.
+- **Consumer-interface schema** *(Phase 0)* — transport is the house Unix-socket
+  JSON-RPC + event stream; the *schema* and its versioning policy are designed in
+  Phase 0 because AiOSOrg depends on stability.
 
 ## Repository layout (planned)
 
@@ -671,34 +695,40 @@ memory-safe Rust behind the boundary.
 
 ## Open Questions
 
-- **Parent feature code for messaging.** Email is F-EMAIL; chat/messaging is not
-  in the parent FEATURES.md. Does AiOSComms get a new **F-COMMS**, or does
-  F-EMAIL broaden to "managed communication"? A parent-project decision.
-- **AiOSOrg's exact needs.** AiOSOrg isn't scoped yet. The consumer interface is
-  designed against a reasonable read (read/subscribe/send/flag/extract-actionable),
-  but its schema should be reviewed when AiOSOrg's own planning starts so the
-  contract matches reality before either side ships.
-- **Telegram path: Bot API vs. MTProto user session.** MTProto gives full
-  personal-account access (the product goal) but is a powerful user session;
-  Bot API is unambiguously fine but limited. Likely both, scoped per use — to
-  confirm with Jason given the ToS posture.
-- **SMS strategy.** The Android-phone bridge is the right model for the user's
-  own number but needs the parent "phone companion app" parking-lot item to
-  exist first. Confirm whether to wait for the companion app or accept a gateway
-  number as an interim.
-- **Per-connector non-Rust wrapping.** Which connectors (Telegram `tdlib`,
-  Matrix/Signal Go tooling) justify a process-boundary wrapper vs. a pure-Rust
-  crate — decided per connector, but the policy (process boundary, never linked
-  C in the core) should be confirmed in Phase 0.
+*Resolved by Jason on 2026-05-23 (plan review):*
+
+- **Parent feature code — F-COMMS. ✅ Resolved.** The parent mints **F-COMMS**
+  (*managed communication*) and **removes F-EMAIL**, which F-COMMS replaces and
+  subsumes. (Done in the parent `FEATURES.md`.)
+- **Core + boundary architecture. ✅ Resolved.** Rust core; provider interfaces
+  are wrappers (Rust *or* Python) that all talk to the core over one uniform API
+  *across a boundary, never linked directly* — called out by Jason as one of, if
+  not the, largest security risk in AiOS.
+- **Telegram is the first chat platform. ✅ Resolved.** (Bot API vs. MTProto
+  remains a per-connector Phase-0 detail — likely both, scoped per use.)
+- **SMS deferred. ✅ Resolved.** SMS moves to later in the roadmap; it waits on
+  the planned **mobile companion app** for AiOS (desktop-first) rather than taking
+  an interim gateway number now.
+- **Agent/AiOSOrg interface = MCP tooling. ✅ Resolved.** MCP tooling for the
+  agent over the *same* API AiOSOrg uses; like the providers, this access is a
+  Rust/Python wrapper over the core's API, never a direct link. (Same as
+  AiOSCalendar.)
+- **At-rest store encryption — reuse the Vault envelope. ✅ Resolved.** Depend on
+  / extract a shared crypto crate; coordinate with AiOSVault.
+
+*Still open — implementation / policy details for Phase 0 or later:*
+
+- **Telegram path: Bot API vs. MTProto user session.** Per-connector Phase-0
+  detail (likely both, scoped per use; ToS-aware).
 - **Contact unification across providers.** How aggressively to correlate the
   same person across email/phone/@handle — useful for the unified pane, but a
   privacy-sensitive inference. Needs a policy.
-- **Reuse of AiOSVault's crypto core for the message store.** Whether to depend
-  on / extract a shared AiOS crypto crate rather than duplicate AiOSVault's
-  envelope-encryption choices. Coordinate with AiOSVault.
-- **Where the untrusted-content reader model runs.** The unprivileged reader
-  needs a model (local per F-ADAPTIVE-AI); confirm it routes through the parent
-  agent's reader, or whether AiOSComms invokes the reader path directly.
+- **Where the untrusted-content reader model runs.** Confirm the unprivileged
+  reader routes through the parent agent's reader (F-ADAPTIVE-AI), or whether
+  AiOSComms invokes the reader path directly.
+- **AiOSOrg's exact interface needs.** Re-review the consumer-interface schema
+  when AiOSOrg's own planning starts, so the contract matches reality before
+  either side ships.
 
 ## Change Log
 
@@ -708,3 +738,4 @@ memory-safe Rust behind the boundary.
 | 2026-05-22 | Integration matrix scoping pass: email (Gmail + IMAP/SMTP) Green/first; Telegram first chat; Matrix/Discord-bot/Outlook breadth; Signal + SMS deferred; **WhatsApp personal accounts ruled out (no lawful path)**; Discord self-bots ruled out | The PARKING_LOT entry explicitly required a dedicated scoping pass before any build; feasibility (technical *and* legal/ToS) is the primary planning constraint for this component |
 | 2026-05-22 | Proposed stack: Rust headless core (hostile-input parsing is security-critical) + Python consumer client; non-Rust provider clients wrapped across a process boundary | Parent language decision applies — memory safety matters most where untrusted bytes are parsed at a privilege boundary |
 | 2026-05-22 | Data model + consumer interface defined as a dedicated, versioned section because AiOSOrg (PARKING_LOT #5) depends on it | Cross-repo consumer contract; designed before its consumer exists, mirroring AiOSVault's control plane |
+| 2026-05-23 | Resolved Open Questions per Jason's review: parent **F-COMMS** minted (replaces F-EMAIL); **all providers AND consumers behind a uniform-API boundary, never linked into the Rust core** (flagged as a top AiOS security risk); **agent/AiOSOrg interface = MCP tooling** over that same API (matches AiOSCalendar); Telegram first chat; **SMS deferred** (awaits the mobile companion app); at-rest store reuses the **Vault envelope**. | Plan approved by Jason; folds the review answers into the plan ahead of merge. |

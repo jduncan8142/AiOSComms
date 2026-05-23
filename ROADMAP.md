@@ -38,10 +38,12 @@ scoping decisions this component lives or dies on.
 - Scaffold the Cargo workspace (recommended: `aioscomms-core` + `aioscomms`),
   `rust-toolchain.toml`, `Makefile`, `NOTICE`, CI (`fmt` / `clippy` / `test` /
   `cargo audit` / `cargo deny`), `.gitignore` already present.
-- **Confirm the scoping decisions** from [PLAN.md](PLAN.md): the Rust-core +
-  Python-client stack; the integration order (email → Telegram → breadth); the
-  per-connector "process boundary, never linked C in the core" policy; crate
-  layout; the encrypted store choice.
+- **Scoping decisions confirmed (2026-05-23, Jason)** — see [PLAN.md](PLAN.md):
+  the Rust core; the integration order (email → Telegram → breadth, **SMS
+  deferred**); and the **boundary policy** — *all* providers and consumers (Rust
+  *or* Python) talk to the core over one uniform API, **never linked directly into
+  it** (a top AiOS security risk). Still to settle in Phase 0: crate layout and
+  the encrypted-store choice (reusing the Vault-style envelope).
 - **Design `DESIGN.md`** — the `Provider` connector trait; the unified
   Account/Thread/Message/Contact schema; the encrypted store schema; the
   untrusted-content boundary (reader contract, sanitizer policy); and **the
@@ -87,10 +89,14 @@ the parent local-AI backbone (parent Phase 2) exists.
 - `X-IF` — the **consumer interface**: Unix-socket JSON-RPC + event stream
   (read, subscribe, send, mark/flag, `extract_actionable`), with `Caller`
   identity and **schema versioning from this first cut**.
-- `X-AGENT` — the agent-facing contract: the planner sees only safe summaries;
-  per-context tool allowlists (reading context cannot send/delete); provenance
-  and audit hooks (F-AUDIT); the outbound undo window (F-RECOVERY).
-- `python/` — the `CommsClient` over the control socket (the agent/AiOSOrg seam).
+- `X-AGENT` — the agent-facing contract, surfaced as **MCP tooling** (decided
+  2026-05-23): the planner sees only safe summaries; per-context tool allowlists
+  (reading context cannot send/delete); provenance and audit hooks (F-AUDIT); the
+  outbound undo window (F-RECOVERY). **AiOSOrg consumes this same API**, and the
+  agent typically mediates AiOSComms↔AiOSOrg.
+- `python/` — the `CommsClient`, a wrapper *over* the control socket (the
+  agent/AiOSOrg seam) and never a direct link into the core; it backs the MCP
+  tooling.
 
 **Exit:** the agent can triage and (gated) send through the consumer interface;
 `extract_actionable` returns structured candidate actions as inert data.
@@ -209,3 +215,4 @@ parent F-INTEROP sandboxed parsers.
 |------|--------|-----------|
 | 2026-05-22 | Initial roadmap created | Repository kickoff; phases aligned to the parent AiOS milestones M1/M2/M3 |
 | 2026-05-22 | Sequencing locked to the integration matrix — email core (Gmail + IMAP/SMTP) first and dogfoodable headless (P1), consumer interface + agent seam (P2), unified pane + Telegram at M2 (P4), sanctioned-provider breadth toward M3 (P5), AiOSOrg-facing freeze (P6) | Realistic ordering: build the legally/technically sound providers first; defer Yellow; never build Red; AiOSComms is post-M1 and downstream of vault/agent/canvas |
+| 2026-05-23 | Folded in Jason's review answers: confirmed Rust core + the **all-providers-and-consumers-behind-a-uniform-API-boundary** policy (P0); agent seam surfaced as **MCP tooling**, AiOSOrg on the same API (P2); **SMS deferred** pending the mobile companion app; at-rest store reuses the Vault envelope. | Plan approved; roadmap brought in line with the resolved Open Questions and parent F-COMMS. |
